@@ -1,0 +1,15 @@
+# Secrets — NEVER commit real credentials. Only .env.example ships.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Build + deps
+node_modules/
+dist/
+coverage/
+
+# Editor / OS noise
+.DS_Store
+*.log

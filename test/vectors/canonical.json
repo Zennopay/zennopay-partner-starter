@@ -1,0 +1,67 @@
+[
+  {
+    "name": "create payment intent (typical POST)",
+    "method": "POST",
+    "path": "/v1/payment_intents",
+    "timestamp": "2026-01-15T10:30:00.000Z",
+    "nonce": "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90",
+    "body": "{\"partner_user_id\":\"user_123\",\"amount_usd_cents\":100,\"corridor\":\"vn_vietqr\"}",
+    "expected": {
+      "bodyHashHex": "25306087cdcfad12f0a5c4573650c7a52c5c4009a67068afee626fcd56a50bab",
+      "canonical": "POST\n/v1/payment_intents\n2026-01-15T10:30:00.000Z\na1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90\n25306087cdcfad12f0a5c4573650c7a52c5c4009a67068afee626fcd56a50bab\n",
+      "signature": "gjv36827cyzpP9nc9jqDV6zv8hJRRlDIjmUFs01qcnw="
+    }
+  },
+  {
+    "name": "empty body (GET-style) hashes to the empty string",
+    "method": "GET",
+    "path": "/v1/payment_intents/pi_abc123",
+    "timestamp": "2026-01-15T10:31:00.000Z",
+    "nonce": "00000000000000000000000000000000ffffffffffffffffffffffffffffffff",
+    "body": "",
+    "expected": {
+      "bodyHashHex": "",
+      "canonical": "GET\n/v1/payment_intents/pi_abc123\n2026-01-15T10:31:00.000Z\n00000000000000000000000000000000ffffffffffffffffffffffffffffffff\n\n",
+      "signature": "j8uG7IumXCfcRofJIS2igAB5Ot8pjihufJet4d5AO5U="
+    }
+  },
+  {
+    "name": "lowercase method is uppercased before signing",
+    "method": "post",
+    "path": "/v1/payment_intents",
+    "timestamp": "2026-01-15T10:32:00.000Z",
+    "nonce": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+    "body": "{\"partner_user_id\":\"user_456\",\"amount_usd_cents\":2500,\"corridor\":\"th_promptpay\"}",
+    "expected": {
+      "bodyHashHex": "d7debb2a525b5eaecf46081550fe2d3284430fc78ff5721935d811775de54ede",
+      "canonical": "POST\n/v1/payment_intents\n2026-01-15T10:32:00.000Z\ndeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef\nd7debb2a525b5eaecf46081550fe2d3284430fc78ff5721935d811775de54ede\n",
+      "signature": "0giehQ0jKbvEmOivuqZRvaGhoA7ItIt+ryL/8qbuJYg="
+    }
+  },
+  {
+    "name": "unicode body bytes are hashed as UTF-8",
+    "method": "POST",
+    "path": "/v1/payment_intents",
+    "timestamp": "2026-01-15T10:33:00.000Z",
+    "nonce": "1111111111111111111111111111111122222222222222222222222222222222",
+    "body": "{\"partner_user_id\":\"ngưới_dùng\",\"amount_usd_cents\":999,\"corridor\":\"vn_vietqr\"}",
+    "expected": {
+      "bodyHashHex": "85ab5d100391eefe7168dd4d2f0bf8e028b78e238f018037124d36e7c84e79ec",
+      "canonical": "POST\n/v1/payment_intents\n2026-01-15T10:33:00.000Z\n1111111111111111111111111111111122222222222222222222222222222222\n85ab5d100391eefe7168dd4d2f0bf8e028b78e238f018037124d36e7c84e79ec\n",
+      "signature": "mXqPHqsyTclaB+0TzxYv5JslSS9/sO9PW+4ajqriYQc="
+    }
+  },
+  {
+    "name": "webhook-style path includes the query string",
+    "method": "POST",
+    "path": "/zennopay/webhook?env=sandbox",
+    "timestamp": "2026-01-15T10:34:00.000Z",
+    "nonce": "3333333333333333333333333333333344444444444444444444444444444444",
+    "body": "{\"webhook_event_id\":\"018f0000-0000-7000-8000-000000000000\",\"webhook_event_type\":\"payment_intent.captured\",\"api_version\":\"2026-05\",\"created_at\":\"2026-01-15T10:34:00.000Z\",\"data\":{}}",
+    "expected": {
+      "bodyHashHex": "2a64f9b6d03a0c972c75697a9ee1cd5191e4920ce0383181bbd60b22d04f828e",
+      "canonical": "POST\n/zennopay/webhook?env=sandbox\n2026-01-15T10:34:00.000Z\n3333333333333333333333333333333344444444444444444444444444444444\n2a64f9b6d03a0c972c75697a9ee1cd5191e4920ce0383181bbd60b22d04f828e\n",
+      "signature": "w7D6iopBERaxqU8ZlbO4TCKflEWKTEPfApCRE7B3ZDE="
+    }
+  }
+]
