@@ -3,6 +3,7 @@
  *
  *   POST /checkout/session          create intent + mint session JWT
  *   POST /checkout/session/refresh  re-mint a JWT for an existing intent
+ *   POST /receipt-token             mint a receipt token (reopen a receipt)
  *   POST /zennopay/webhook          signature-verified event intake
  *   GET  /health                    liveness probe
  *
@@ -21,8 +22,9 @@ import type { IntentSnapshot } from './wallet.js';
 import { parseEnvelope, verifyWebhookSignature } from './webhooks.js';
 import { createPaymentIntent, ZennopayApiError } from './zennopay/client.js';
 import { mintSessionJwt } from './zennopay/session.js';
+import { mintReceiptToken } from './zennopay/receipt.js';
 
-export const STARTER_VERSION = '0.1.0';
+export const STARTER_VERSION = '0.1.1';
 
 interface SessionResponse {
   intent_id: string;
@@ -144,6 +146,30 @@ export function createApp(cfg: Config): Hono {
   });
 
   // ── Webhook intake ───────────────────────────────────────────────────────
+  // ── Mint a receipt token ─────────────────────────────────────────────────
+  // Call this when the user taps a row in YOUR transaction-history UI. Returns
+  // a short-lived, user-scoped, read-only token the SDK uses with
+  // Zennopay.presentReceipt(intentId, receiptToken) to reopen the authoritative
+  // receipt (live pending/refund status). Put this behind YOUR app auth — the
+  // user_id MUST be the authenticated user, never trusted from the client.
+  app.post('/receipt-token', async (c) => {
+    let body: Record<string, unknown>;
+    try {
+      body = await c.req.json<Record<string, unknown>>();
+    } catch {
+      return c.json({ error: 'invalid_json' }, 400);
+    }
+    const userId = body.user_id;
+    if (typeof userId !== 'string' || userId === '') {
+      return c.json({ error: 'invalid_request', detail: 'user_id (string) is required' }, 400);
+    }
+    const { receiptToken, expiresAt } = mintReceiptToken(cfg, { partnerUserId: userId });
+    return c.json({
+      receipt_token: receiptToken,
+      expires_at: new Date(expiresAt * 1000).toISOString(),
+    });
+  });
+
   app.post('/zennopay/webhook', async (c) => {
     if (cfg.webhookSecret === null) {
       return c.json(

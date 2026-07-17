@@ -9,6 +9,11 @@ build before the SDK can do anything:
   checkout-session JWT the PaymentSheet SDK consumes.
 - **`POST /checkout/session/refresh`** — re-mints a JWT for an existing
   intent (same user) when the 5-minute token expires mid-checkout.
+- **`POST /receipt-token`** — mints a short-lived, user-scoped, read-only
+  receipt token. Call it when a user taps a row in **your** transaction-history
+  UI; the SDK uses it with `Zennopay.presentReceipt(intentId, receiptToken)` to
+  reopen the authoritative Zennopay receipt (live pending/refund status). You
+  keep the history list; Zennopay owns the receipt.
 - **`POST /zennopay/webhook`** — signature-verified intake for
   `payment_intent.*` events, routed to a pluggable wallet/ledger seam.
 - **`GET /health`** — liveness probe.
