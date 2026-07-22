@@ -26,4 +26,10 @@ serve({ fetch: app.fetch, port: cfg.port }, (info) => {
   if (cfg.webhookSecret === null) {
     console.warn('[config] ZENNOPAY_WEBHOOK_SECRET not set — POST /zennopay/webhook returns 501.');
   }
+  if (cfg.jwtPrivateKey === null) {
+    console.info(
+      '[config] optional JWT keypair not set — checkout works (Zennopay mints the ' +
+        'session token); POST /receipt-token returns 501 until you configure it.',
+    );
+  }
 });

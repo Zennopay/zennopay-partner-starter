@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import crypto from 'node:crypto';
 import { mintReceiptToken, RECEIPT_JWT_AUDIENCE } from '../src/zennopay/receipt.js';
-import { decodeJwtUnverified, verifyJwtSignature } from '../src/zennopay/session.js';
+import { decodeJwtUnverified, verifyJwtSignature } from '../src/zennopay/jwt.js';
 
 const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
 const cfg = {

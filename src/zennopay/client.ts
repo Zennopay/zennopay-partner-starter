@@ -19,6 +19,7 @@
  */
 import crypto from 'node:crypto';
 
+import type { Attestations } from '../attestations.js';
 import type { Config } from '../config.js';
 
 /** SHA-256 hex of the request body. Empty body → empty string (per spec). */
@@ -100,11 +101,36 @@ export interface CreateIntentInput {
   partnerUserId: string;
   amountUsdCents: number;
   corridor: string;
+  /**
+   * Your regulated KYC + sanctions attestations for this user. Zennopay
+   * verifies them and BINDS them into the session token it mints (Model B),
+   * so they must be your real compliance facts — see src/attestations.ts.
+   */
+  attestations: Attestations;
 }
 
 export interface CreateIntentResult {
   intentId: string;
+  /**
+   * The Zennopay-MINTED checkout-session token (Model B). Hand this to the
+   * PaymentSheet SDK — the partner no longer self-signs a session JWT.
+   */
+  sessionToken: string;
+  /** Session token expiry, Unix seconds (call remintSession to extend). */
+  sessionExpiresAt: number;
   /** Raw response body — useful for logging/debugging. */
+  raw: Record<string, unknown>;
+}
+
+export interface RemintSessionInput {
+  partnerUserId: string;
+  attestations: Attestations;
+}
+
+export interface RemintSessionResult {
+  sessionToken: string;
+  /** Unix seconds. */
+  sessionExpiresAt: number;
   raw: Record<string, unknown>;
 }
 
@@ -118,10 +144,36 @@ export class ZennopayApiError extends Error {
   }
 }
 
+function parseSessionFields(
+  json: Record<string, unknown>,
+  status: number,
+): { sessionToken: string; sessionExpiresAt: number } {
+  const sessionToken = json.session_token;
+  if (typeof sessionToken !== 'string' || sessionToken === '') {
+    throw new ZennopayApiError(
+      `Zennopay answered HTTP ${status} but returned no session_token`,
+      status,
+      json,
+    );
+  }
+  const sessionExpiresAt = json.session_expires_at;
+  if (typeof sessionExpiresAt !== 'number') {
+    throw new ZennopayApiError(
+      `Zennopay returned a session_token but no numeric session_expires_at`,
+      status,
+      json,
+    );
+  }
+  return { sessionToken, sessionExpiresAt };
+}
+
 /**
  * POST /v1/payment_intents — HMAC-signed, idempotent via Idempotency-Key.
- * Creating an intent reserves nothing and moves no money; funds only move
- * after the end user confirms in the PaymentSheet.
+ *
+ * Model B: the response carries the Zennopay-minted `session_token` +
+ * `session_expires_at` alongside the `intent_id`. Creating an intent reserves
+ * nothing and moves no money; funds only move after the end user confirms in
+ * the PaymentSheet.
  */
 export async function createPaymentIntent(
   cfg: Pick<Config, 'baseUrl' | 'hmacKeyId' | 'hmacSecret'>,
@@ -133,6 +185,8 @@ export async function createPaymentIntent(
     partner_user_id: input.partnerUserId,
     amount_usd_cents: input.amountUsdCents,
     corridor: input.corridor,
+    kyc_attestation: input.attestations.kyc,
+    sanctions_attestation: input.attestations.sanctions,
   });
   const headers: Record<string, string> = {
     ...signRequest({
@@ -163,5 +217,49 @@ export async function createPaymentIntent(
   if (typeof intentId !== 'string' || intentId === '') {
     throw new ZennopayApiError('create returned 201 but no intent_id', res.status, json);
   }
-  return { intentId, raw: json };
+  const { sessionToken, sessionExpiresAt } = parseSessionFields(json, res.status);
+  return { intentId, sessionToken, sessionExpiresAt, raw: json };
+}
+
+/**
+ * POST /v1/payment_intents/:id/session — re-mint a checkout-session token for
+ * an EXISTING intent (same user) when the short-lived token expires
+ * mid-checkout. HMAC-signed; a refresh, so NO Idempotency-Key.
+ */
+export async function remintSession(
+  cfg: Pick<Config, 'baseUrl' | 'hmacKeyId' | 'hmacSecret'>,
+  intentId: string,
+  input: RemintSessionInput,
+  opts: { fetchImpl?: typeof fetch } = {},
+): Promise<RemintSessionResult> {
+  const path = `/v1/payment_intents/${encodeURIComponent(intentId)}/session`;
+  const body = JSON.stringify({
+    partner_user_id: input.partnerUserId,
+    kyc_attestation: input.attestations.kyc,
+    sanctions_attestation: input.attestations.sanctions,
+  });
+  const headers: Record<string, string> = signRequest({
+    method: 'POST',
+    path,
+    body,
+    keyId: cfg.hmacKeyId,
+    secret: cfg.hmacSecret,
+  });
+  const doFetch = opts.fetchImpl ?? fetch;
+  const res = await doFetch(`${cfg.baseUrl}${path}`, {
+    method: 'POST',
+    headers,
+    body,
+    signal: AbortSignal.timeout(30_000),
+  });
+  const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!res.ok) {
+    throw new ZennopayApiError(
+      `re-mint session failed (HTTP ${res.status})`,
+      res.status,
+      json,
+    );
+  }
+  const { sessionToken, sessionExpiresAt } = parseSessionFields(json, res.status);
+  return { sessionToken, sessionExpiresAt, raw: json };
 }

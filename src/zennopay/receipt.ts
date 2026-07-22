@@ -3,7 +3,7 @@
  *
  * A receipt token lets the Zennopay SDK reopen the AUTHORITATIVE receipt for a
  * past payment — `Zennopay.presentReceipt(intentId, receiptToken)` on the
- * client. Unlike the checkout-session JWT it is:
+ * client. Unlike the checkout-session token it is:
  *   - user-scoped, NOT intent-bound (one token can open any of that user's
  *     receipts and poll a pending one)
  *   - reusable within its short TTL (no single-use jti burn)
@@ -21,8 +21,6 @@
  *   iat / exp — issued-at / expiry (default TTL 300s; Zennopay enforces ≤ 15m)
  */
 import crypto from 'node:crypto';
-
-import type { Config } from '../config.js';
 
 export const RECEIPT_JWT_AUDIENCE = 'zennopay-receipt';
 export const RECEIPT_JWT_TTL_SEC = 300;
@@ -47,8 +45,19 @@ export interface MintedReceiptToken {
   expiresAt: number;
 }
 
+/**
+ * The keypair the receipt flow signs with. Non-null by construction — callers
+ * must confirm the optional JWT keypair is configured before minting (the
+ * route answers 501 otherwise). Accepts a KeyObject or a raw PKCS#8 PEM.
+ */
+export interface ReceiptSigningKey {
+  jwtPrivateKey: crypto.KeyObject | string;
+  jwtKid: string;
+  jwtIss: string;
+}
+
 export function mintReceiptToken(
-  cfg: Pick<Config, 'jwtPrivateKey' | 'jwtKid' | 'jwtIss'>,
+  cfg: ReceiptSigningKey,
   input: MintReceiptInput,
 ): MintedReceiptToken {
   const now = input.nowSec ?? Math.floor(Date.now() / 1000);
