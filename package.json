@@ -1,7 +1,7 @@
 {
   "name": "zennopay-partner-starter",
-  "version": "0.1.1",
-  "description": "Official starter for Zennopay partner backends — session endpoint, JWT minting, webhooks, and a setup doctor",
+  "version": "0.2.0",
+  "description": "Official starter for Zennopay partner backends — HMAC-signed intent creation, Zennopay-minted checkout-session tokens, webhooks, and a setup doctor",
   "license": "MIT",
   "type": "module",
   "engines": {

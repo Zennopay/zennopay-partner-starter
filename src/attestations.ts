@@ -4,11 +4,12 @@
  * │  sanctions-screening systems.                                           │
  * └─────────────────────────────────────────────────────────────────────────┘
  *
- * Every checkout-session JWT carries two attestations that Zennopay TRUSTS
- * as your regulated statement of fact about the end user:
+ * Every create-intent request carries two attestations that Zennopay TRUSTS
+ * as your regulated statement of fact about the end user (Model B: Zennopay
+ * verifies them and binds them into the session token it mints):
  *
- *   zennopay:kyc_attestation        — "we verified this user's identity"
- *   zennopay:sanctions_attestation  — "we screened this user and they are clean"
+ *   kyc_attestation        — "we verified this user's identity"
+ *   sanctions_attestation  — "we screened this user and they are clean"
  *
  * These are compliance representations, not decoration. Returning
  * hardcoded `verified: true` / `clean: true` values for real users is a
@@ -81,7 +82,9 @@ export function buildSandboxStubAttestations(now: Date = new Date()): Attestatio
 export async function getAttestations(partnerUserId: string): Promise<Attestations> {
   if (process.env.ATTESTATIONS_MODE === 'sandbox-stub') {
     const base = process.env.ZENNOPAY_BASE_URL ?? '';
-    if (base.startsWith('https://api.zennopay.com')) {
+    // Production host is api.zennopay.in; the sandbox (api.sandbox.zennopay.in)
+    // has the extra `sandbox.` label, so this prefix check excludes it.
+    if (base.startsWith('https://api.zennopay.in')) {
       throw new Error(
         'ATTESTATIONS_MODE=sandbox-stub is not allowed against the production API. ' +
           'Wire src/attestations.ts to your real KYC/sanctions systems first.',
@@ -101,9 +104,9 @@ export async function getAttestations(partnerUserId: string): Promise<Attestatio
   //   if (!kycRecord.verified) throw new UserNotVerifiedError(partnerUserId);
   //   return { kyc: {...}, sanctions: {...} };
   throw new Error(
-    'getAttestations() is not implemented. Zennopay session JWTs carry KYC and ' +
-      'sanctions attestations that MUST come from your real compliance systems — ' +
-      'edit src/attestations.ts. For sandbox experiments only, set ' +
+    'getAttestations() is not implemented. Zennopay create-intent requests carry ' +
+      'KYC and sanctions attestations that MUST come from your real compliance ' +
+      'systems — edit src/attestations.ts. For sandbox experiments only, set ' +
       'ATTESTATIONS_MODE=sandbox-stub in your environment.',
   );
 }

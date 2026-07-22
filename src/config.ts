@@ -17,12 +17,17 @@ export interface Config {
   hmacKeyId: string;
   /** HMAC shared secret paired with the key id. Server-side only. */
   hmacSecret: string;
-  /** Your RS256 signing key for checkout-session JWTs (private half). */
-  jwtPrivateKey: crypto.KeyObject;
-  /** Key id ("kid") registered with Zennopay for the JWT public key. */
-  jwtKid: string;
-  /** Issuer URL registered with Zennopay (must match exactly). */
-  jwtIss: string;
+  /**
+   * OPTIONAL RS256 signing key. Model B (Zennopay-minted session tokens) does
+   * NOT need it — the checkout flow authenticates with HMAC only. It is used
+   * solely by the legacy keypair-based receipt-token flow (see PAY-39). `null`
+   * when the ZENNOPAY_JWT_* env vars are absent.
+   */
+  jwtPrivateKey: crypto.KeyObject | null;
+  /** Key id ("kid") registered with Zennopay for the JWT public key, or null. */
+  jwtKid: string | null;
+  /** Issuer URL registered with Zennopay, or null. */
+  jwtIss: string | null;
   /** Port for the HTTP server. */
   port: number;
   /**
@@ -104,7 +109,7 @@ export function parseJwtPrivateKey(b64: string): crypto.KeyObject {
   }
   if (key.asymmetricKeyType !== 'rsa') {
     throw new ConfigError(
-      `JWT private key is "${key.asymmetricKeyType}", but Zennopay session JWTs ` +
+      `JWT private key is "${key.asymmetricKeyType}", but Zennopay receipt tokens ` +
         `are RS256 — the key must be RSA (2048-bit or larger).`,
     );
   }
@@ -112,17 +117,27 @@ export function parseJwtPrivateKey(b64: string): crypto.KeyObject {
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  const baseUrl = (env.ZENNOPAY_BASE_URL ?? 'https://api.sandbox.zennopay.com')
+  const baseUrl = (env.ZENNOPAY_BASE_URL ?? 'https://api.sandbox.zennopay.in')
     .trim()
     .replace(/\/+$/, '');
   const webhookSecret = env.ZENNOPAY_WEBHOOK_SECRET?.trim();
+
+  // The JWT keypair is OPTIONAL under Model B — only parse it if provided. It
+  // is used solely by the keypair-based receipt-token flow (PAY-39).
+  const jwtPrivateKeyB64 = env.ZENNOPAY_JWT_PRIVATE_KEY_B64?.trim();
+  const jwtKid = env.ZENNOPAY_JWT_KID?.trim();
+  const jwtIss = env.ZENNOPAY_JWT_ISS?.trim();
+
   return {
     baseUrl,
     hmacKeyId: required(env, 'ZENNOPAY_HMAC_KEY_ID'),
     hmacSecret: required(env, 'ZENNOPAY_HMAC_SECRET'),
-    jwtPrivateKey: parseJwtPrivateKey(required(env, 'ZENNOPAY_JWT_PRIVATE_KEY_B64')),
-    jwtKid: required(env, 'ZENNOPAY_JWT_KID'),
-    jwtIss: required(env, 'ZENNOPAY_JWT_ISS'),
+    jwtPrivateKey:
+      jwtPrivateKeyB64 !== undefined && jwtPrivateKeyB64 !== ''
+        ? parseJwtPrivateKey(jwtPrivateKeyB64)
+        : null,
+    jwtKid: jwtKid !== undefined && jwtKid !== '' ? jwtKid : null,
+    jwtIss: jwtIss !== undefined && jwtIss !== '' ? jwtIss : null,
     port: Number.parseInt(env.PORT ?? '8787', 10),
     webhookSecret: webhookSecret !== undefined && webhookSecret !== '' ? webhookSecret : null,
     defaultCorridor: env.ZENNOPAY_DEFAULT_CORRIDOR?.trim() || 'vn_vietqr',

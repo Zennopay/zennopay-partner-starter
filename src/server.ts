@@ -1,11 +1,15 @@
 /**
  * HTTP routes — the partner side of the Zennopay PaymentSheet integration.
  *
- *   POST /checkout/session          create intent + mint session JWT
- *   POST /checkout/session/refresh  re-mint a JWT for an existing intent
- *   POST /receipt-token             mint a receipt token (reopen a receipt)
+ *   POST /checkout/session          create intent (HMAC) → return the
+ *                                   Zennopay-MINTED session token (Model B)
+ *   POST /checkout/session/refresh  re-mint the session token for an intent
+ *   POST /receipt-token             mint a receipt token (optional keypair)
  *   POST /zennopay/webhook          signature-verified event intake
  *   GET  /health                    liveness probe
+ *
+ * Model B: the partner authenticates to Zennopay with HMAC only and returns
+ * the `session_token` the API mints — there is no self-signed session JWT.
  *
  * AUTH NOTE: /checkout/session endpoints must only be callable by YOUR
  * authenticated apps. Put them behind your existing app/session auth (API
@@ -20,16 +24,16 @@ import { findSession, saveSession } from './store.js';
 import * as wallet from './wallet.js';
 import type { IntentSnapshot } from './wallet.js';
 import { parseEnvelope, verifyWebhookSignature } from './webhooks.js';
-import { createPaymentIntent, ZennopayApiError } from './zennopay/client.js';
-import { mintSessionJwt } from './zennopay/session.js';
+import { createPaymentIntent, remintSession, ZennopayApiError } from './zennopay/client.js';
 import { mintReceiptToken } from './zennopay/receipt.js';
 
-export const STARTER_VERSION = '0.1.1';
+export const STARTER_VERSION = '0.2.0';
 
 interface SessionResponse {
   intent_id: string;
-  session_jwt: string;
-  /** ISO 8601 expiry of the JWT (5 minutes; call refresh to extend). */
+  /** The Zennopay-MINTED checkout-session token (Model B). */
+  session_token: string;
+  /** ISO 8601 expiry of the token (call refresh to extend). */
   expires_at: string;
 }
 
@@ -69,15 +73,22 @@ export function createApp(cfg: Config): Hono {
     //    no intent should ever be created.
     const attestations = await getAttestations(userId);
 
-    // 2. Create the payment intent (HMAC-signed server-to-server call).
+    // 2. Create the payment intent (HMAC-signed server-to-server call). Under
+    //    Model B, Zennopay verifies the attestations and returns the minted
+    //    session token in the SAME response — the partner never self-signs it.
     let intentId: string;
+    let sessionToken: string;
+    let sessionExpiresAt: number;
     try {
       const created = await createPaymentIntent(cfg, {
         partnerUserId: userId,
         amountUsdCents,
         corridor,
+        attestations,
       });
       intentId = created.intentId;
+      sessionToken = created.sessionToken;
+      sessionExpiresAt = created.sessionExpiresAt;
     } catch (err) {
       if (err instanceof ZennopayApiError) {
         console.error('[session] create intent failed', err.status, JSON.stringify(err.body));
@@ -85,15 +96,6 @@ export function createApp(cfg: Config): Hono {
       }
       throw err;
     }
-
-    // 3. Mint the short-lived session JWT the PaymentSheet SDK will use.
-    const minted = mintSessionJwt(cfg, {
-      intentId,
-      amountUsdCents,
-      corridor,
-      partnerUserId: userId,
-      attestations,
-    });
 
     saveSession({
       intentId,
@@ -105,8 +107,8 @@ export function createApp(cfg: Config): Hono {
 
     const res: SessionResponse = {
       intent_id: intentId,
-      session_jwt: minted.jwt,
-      expires_at: new Date(minted.expiresAt * 1000).toISOString(),
+      session_token: sessionToken,
+      expires_at: new Date(sessionExpiresAt * 1000).toISOString(),
     };
     return c.json(res, 201);
   });
@@ -130,19 +132,24 @@ export function createApp(cfg: Config): Hono {
     // Re-attest at refresh time — cheap insurance that a user who was
     // deactivated mid-checkout doesn't get a fresh token.
     const attestations = await getAttestations(session.partnerUserId);
-    const minted = mintSessionJwt(cfg, {
-      intentId: session.intentId,
-      amountUsdCents: session.amountUsdCents,
-      corridor: session.corridor,
-      partnerUserId: session.partnerUserId,
-      attestations,
-    });
-    const res: SessionResponse = {
-      intent_id: session.intentId,
-      session_jwt: minted.jwt,
-      expires_at: new Date(minted.expiresAt * 1000).toISOString(),
-    };
-    return c.json(res, 200);
+    try {
+      const reminted = await remintSession(cfg, session.intentId, {
+        partnerUserId: session.partnerUserId,
+        attestations,
+      });
+      const res: SessionResponse = {
+        intent_id: session.intentId,
+        session_token: reminted.sessionToken,
+        expires_at: new Date(reminted.sessionExpiresAt * 1000).toISOString(),
+      };
+      return c.json(res, 200);
+    } catch (err) {
+      if (err instanceof ZennopayApiError) {
+        console.error('[refresh] re-mint failed', err.status, JSON.stringify(err.body));
+        return c.json({ error: 'zennopay_error', status: err.status, detail: err.body }, 502);
+      }
+      throw err;
+    }
   });
 
   // ── Webhook intake ───────────────────────────────────────────────────────
@@ -163,7 +170,25 @@ export function createApp(cfg: Config): Hono {
     if (typeof userId !== 'string' || userId === '') {
       return c.json({ error: 'invalid_request', detail: 'user_id (string) is required' }, 400);
     }
-    const { receiptToken, expiresAt } = mintReceiptToken(cfg, { partnerUserId: userId });
+    // Receipts still use the keypair (Model A), which is now OPTIONAL. Answer
+    // 501 with a clear pointer if it is not configured — the checkout flow
+    // (Model B) does not need it.
+    if (cfg.jwtPrivateKey === null || cfg.jwtKid === null || cfg.jwtIss === null) {
+      return c.json(
+        {
+          error: 'not_configured',
+          detail:
+            'receipt tokens require the optional JWT keypair ' +
+            '(ZENNOPAY_JWT_PRIVATE_KEY_B64 / ZENNOPAY_JWT_KID / ZENNOPAY_JWT_ISS); ' +
+            'Zennopay-minted receipts are coming — see PAY-39',
+        },
+        501,
+      );
+    }
+    const { receiptToken, expiresAt } = mintReceiptToken(
+      { jwtPrivateKey: cfg.jwtPrivateKey, jwtKid: cfg.jwtKid, jwtIss: cfg.jwtIss },
+      { partnerUserId: userId },
+    );
     return c.json({
       receipt_token: receiptToken,
       expires_at: new Date(expiresAt * 1000).toISOString(),
